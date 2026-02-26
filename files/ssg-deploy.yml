@@ -1,0 +1,56 @@
+# ===============================================================
+# Deploy Frontend (S3)
+# ---------------------------------------------------------------
+
+# PREREQUISITES IN AWS
+# - S3 bucket
+# - CloudFront distribution
+
+#
+# REQUIRED GITHUB SECRETS
+# - secrets.AWS_OIDC_ROLE_ARN         → IAM role ARN to assume via OIDC
+# - secrets.AWS_REGION              → AWS region (e.g., us-east-1)
+# - secrets.S3_BUCKET_NAME               → S3 bucket name (e.g., my-site-bucket)
+# - secrets.CLOUDFRONT_DISTRIBUTION_ID → CloudFront distribution ID to invalidate
+# ===============================================================
+
+name: Upload index.html to S3
+
+on:
+  push:
+    branches:
+      - 'nonprod'    # adjust to your branch names
+
+permissions:
+  id-token: write        
+  contents: read
+
+jobs:
+  upload:
+    # if you use envs named dev/qa/staging/prod, running from that branch will bind to that env
+    environment: ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: upload-index-${{ github.ref_name }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region:     ${{ secrets.AWS_REGION }}
+
+      - name: Upload index.html
+        run: |
+          aws s3 cp index.html "s3://${{ secrets.S3_BUCKET_NAME }}/index.html" \
+            --content-type "text/html; charset=utf-8" \
+            --cache-control "no-cache"
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/index.html" "/"

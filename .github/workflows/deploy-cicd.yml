@@ -1,0 +1,175 @@
+name: deploy-cicd
+
+on:
+  workflow_dispatch:
+    inputs:
+        s3_bucket_name:
+            description: 'S3 bucket name'
+            required: true
+        oidc_role_arn:
+            description: 'OIDC Role ARN for AWS access'
+            required: true
+        aws_region:
+            description: 'AWS region (e.g., us-east-1)'
+            required: true
+        cloudfront_distribution_id:
+            description: 'CloudFront distribution ID to invalidate'
+            required: true
+        repository:
+            description: 'Repository to deploy'
+            required: true
+        env:
+            description: 'Environment (e.g., dev, staging, prod)'
+            required: true
+        is_spa:
+            description: 'Is this a SPA deployment? (true/false)'
+            required: true
+    
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  APP_ID: ${{ secrets.APP_ID }}
+  APP_PEM_FILE: ${{ secrets.APP_PEM_FILE }}       
+  ORGANIZATION: ${{ secrets.ORGANIZATION }}
+  MAROON_OIDC_ROLE: ${{ secrets.MAROON_OIDC_ROLE }}
+  MAROON_STATE_BUCKET: ${{ secrets.MAROON_STATE_BUCKET }}
+  MAROON_STATE_KEY: ${{ secrets.MAROON_STATE_KEY }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      plan_artifact: ${{ steps.upload.outputs.name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+              python-version: "3.11"
+
+      - name: Install Python deps
+        run: pip install requests pyjwt cryptography
+          
+      - name: Get GitHub App Installation ID
+        id: get_installation_id
+        env:
+            APP_ID: ${{ env.APP_ID }}
+            APP_PEM: ${{ env.APP_PEM_FILE }}
+            ORGANIZATION: ${{ env.ORGANIZATION }}
+        run: echo "INSTALLATION_ID=$(python scripts/get_installation_id.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Assume maroon role (OIDC) for backend access
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          role-to-assume: ${{ env.MAROON_OIDC_ROLE }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Terraform init
+        env:
+          TF_VAR_github_organization: ${{ env.ORGANIZATION }}
+          TF_VAR_app_id: ${{ env.APP_ID }}
+          TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
+          TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
+          TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
+          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn }}
+          TF_VAR_aws_region: ${{ inputs.aws_region }}
+          TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
+          TF_VAR_repository_name: ${{ inputs.repository }}
+          TF_VAR_environment: ${{ inputs.env }}
+          TF_VAR_is_spa: ${{ inputs.is_spa }}
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ env.MAROON_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.MAROON_STATE_KEY }}" \
+            -backend-config="region=us-east-1" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform plan (save binary plan)
+        env:
+          TF_VAR_github_organization: ${{ env.ORGANIZATION }}
+          TF_VAR_app_id: ${{ env.APP_ID }}
+          TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
+          TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
+        run: terraform plan -out=tfplan
+
+      - name: Save plan for review
+        run: terraform show tfplan
+
+      - name: Upload plan artifact
+        id: upload
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: tfplan
+          path: tfplan
+
+  apply:
+    name: Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+              python-version: "3.11"
+
+      - name: Install Python deps
+        run: pip install requests pyjwt cryptography
+          
+      - name: Get GitHub App Installation ID
+        id: get_installation_id
+        env:
+            APP_ID: ${{ env.APP_ID }}
+            APP_PEM: ${{ env.APP_PEM_FILE }}
+            ORGANIZATION: ${{ env.ORGANIZATION }}
+        run: echo "INSTALLATION_ID=$(python scripts/get_installation_id.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v7.0.0
+        with:
+          name: tfplan
+          path: .
+
+      - name: Assume maroon role (OIDC) for backend access
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          role-to-assume: ${{ env.MAROON_OIDC_ROLE }}
+          aws-region: us-east-1
+          
+      - name: Setup Terraform CLI
+        uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Terraform init
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ env.MAROON_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.MAROON_STATE_KEY }}" \
+            -backend-config="region=us-east-1" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform apply
+        env:
+          TF_VAR_github_organization: ${{ env.ORGANIZATION }}
+          TF_VAR_app_id: ${{ env.APP_ID }}
+          TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
+          TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
+          TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
+          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn }}
+          TF_VAR_aws_region: ${{ inputs.aws_region }}
+          TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
+          TF_VAR_repository_name: ${{ inputs.repository }}
+          TF_VAR_environment: ${{ inputs.env }}
+          TF_VAR_is_spa: ${{ inputs.is_spa }}
+        run: terraform apply -input=false tfplan
