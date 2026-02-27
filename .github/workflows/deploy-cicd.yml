@@ -3,26 +3,30 @@ name: deploy-cicd
 on:
   workflow_dispatch:
     inputs:
-        s3_bucket_name:
-            description: 'S3 bucket name'
-            required: true
-        oidc_role_arn:
-            description: 'OIDC Role ARN for AWS access'
+        aws_account_id:
+            description: 'AWS account ID'
             required: true
         aws_region:
-            description: 'AWS region (e.g., us-east-1)'
+            description: 'AWS region for deployment'
+            required: true
+        s3_bucket_name:
+            description: 'S3 bucket name'
             required: true
         cloudfront_distribution_id:
             description: 'CloudFront distribution ID to invalidate'
             required: true
+        is_spa:
+            description: 'Is this a SPA deployment? (true/false)'
+            required: true
+            type: choice
+            options: 
+                - true
+                - false
         repository:
             description: 'Repository to deploy'
             required: true
         env:
             description: 'Environment (e.g., dev, staging, prod)'
-            required: true
-        is_spa:
-            description: 'Is this a SPA deployment? (true/false)'
             required: true
     
 permissions:
@@ -35,7 +39,6 @@ env:
   ORGANIZATION: ${{ secrets.ORGANIZATION }}
   MAROON_OIDC_ROLE: ${{ secrets.MAROON_OIDC_ROLE }}
   MAROON_STATE_BUCKET: ${{ secrets.MAROON_STATE_BUCKET }}
-  MAROON_STATE_KEY: ${{ secrets.MAROON_STATE_KEY }}
 
 jobs:
   plan:
@@ -43,6 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       plan_artifact: ${{ steps.upload.outputs.name }}
+      role_arn: ${{ steps.compose-role.outputs.role_arn }}
+      state_key: ${{ steps.compose.outputs.STATE_KEY }}
 
     steps:
       - name: Checkout
@@ -70,6 +75,18 @@ jobs:
           role-to-assume: ${{ env.MAROON_OIDC_ROLE }}
           aws-region: us-east-1
 
+      - name: Compose OIDC role ARN for target account
+        id: compose-role
+        run: |
+          ROLE_ARN="arn:aws:iam::${{ github.event.inputs.aws_account_id}}:role/${{ secrets.OIDC_ROLE_COMMON_NAME }}"
+          echo "role_arn=${ROLE_ARN}" >> $GITHUB_OUTPUT
+
+      - name: Compose backend key
+        id: compose
+        run: |
+          KEY="${{ github.event.inputs.aws_account_id }}-${{ github.event.inputs.s3_bucket_name }}/terraform.tfstate"
+          echo "STATE_KEY=${KEY}" >> $GITHUB_OUTPUT
+
       - name: Setup Terraform CLI
         uses: hashicorp/setup-terraform@v3.1.2
 
@@ -80,7 +97,7 @@ jobs:
           TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
           TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
           TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
-          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn }}
+          TF_VAR_aws_oidc_role_arn: ${{ steps.compose-role.outputs.role_arn }}
           TF_VAR_aws_region: ${{ inputs.aws_region }}
           TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
           TF_VAR_repository_name: ${{ inputs.repository }}
@@ -89,7 +106,7 @@ jobs:
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ env.MAROON_STATE_BUCKET }}" \
-            -backend-config="key=${{ env.MAROON_STATE_KEY }}" \
+            -backend-config="key=${{ steps.compose.outputs.STATE_KEY }}" \
             -backend-config="region=us-east-1" \
             -backend-config="encrypt=true"
 
@@ -155,7 +172,7 @@ jobs:
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ env.MAROON_STATE_BUCKET }}" \
-            -backend-config="key=${{ env.MAROON_STATE_KEY }}" \
+            -backend-config="key=${{ needs.plan.outputs.STATE_KEY }}" \
             -backend-config="region=us-east-1" \
             -backend-config="encrypt=true"
 
@@ -166,7 +183,7 @@ jobs:
           TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
           TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
           TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
-          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn }}
+          TF_VAR_aws_oidc_role_arn: ${{ needs.plan.outputs.role_arn  }}
           TF_VAR_aws_region: ${{ inputs.aws_region }}
           TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
           TF_VAR_repository_name: ${{ inputs.repository }}
