@@ -26,8 +26,13 @@ on:
             description: 'Repository to deploy'
             required: true
         env:
-            description: 'Environment (e.g., dev, staging, prod)'
+            description: 'Environment (e.g., nonprod, nonprod-qa)'
             required: true
+            type: choice
+            options: 
+                - nonprod
+                - nonprod-qa
+                - prod
     
 permissions:
   contents: read
@@ -91,18 +96,6 @@ jobs:
         uses: hashicorp/setup-terraform@v3.1.2
 
       - name: Terraform init
-        env:
-          TF_VAR_github_organization: ${{ env.ORGANIZATION }}
-          TF_VAR_app_id: ${{ env.APP_ID }}
-          TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
-          TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
-          TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
-          TF_VAR_aws_oidc_role_arn: ${{ steps.compose-role.outputs.role_arn }}
-          TF_VAR_aws_region: ${{ inputs.aws_region }}
-          TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
-          TF_VAR_repository_name: ${{ inputs.repository }}
-          TF_VAR_environment: ${{ inputs.env }}
-          TF_VAR_is_spa: ${{ inputs.is_spa }}
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ env.MAROON_STATE_BUCKET }}" \
@@ -116,6 +109,13 @@ jobs:
           TF_VAR_app_id: ${{ env.APP_ID }}
           TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
           TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
+          TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
+          TF_VAR_aws_oidc_role_arn: ${{ steps.compose-role.outputs.role_arn }}
+          TF_VAR_aws_region: ${{ inputs.aws_region }}
+          TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
+          TF_VAR_repository_name: ${{ inputs.repository }}
+          TF_VAR_environment: ${{ inputs.env }}
+          TF_VAR_is_spa: ${{ inputs.is_spa }}
         run: terraform plan -out=tfplan
 
       - name: Save plan for review
