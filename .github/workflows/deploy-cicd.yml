@@ -3,8 +3,8 @@ name: deploy-cicd
 on:
   workflow_dispatch:
     inputs:
-        aws_account_id:
-            description: 'AWS account ID'
+        oidc_role_arn:
+            description: 'AWS OIDC role ARN'
             required: true
         aws_region:
             description: 'AWS region for deployment'
@@ -51,7 +51,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       plan_artifact: ${{ steps.upload.outputs.name }}
-      role_arn: ${{ steps.compose-role.outputs.role_arn }}
       state_key: ${{ steps.compose.outputs.STATE_KEY }}
 
     steps:
@@ -80,16 +79,10 @@ jobs:
           role-to-assume: ${{ env.MAROON_OIDC_ROLE }}
           aws-region: us-east-1
 
-      - name: Compose OIDC role ARN for target account
-        id: compose-role
-        run: |
-          ROLE_ARN="arn:aws:iam::${{ github.event.inputs.aws_account_id}}:role/${{ secrets.OIDC_ROLE_COMMON_NAME }}"
-          echo "role_arn=${ROLE_ARN}" >> $GITHUB_OUTPUT
-
       - name: Compose backend key
         id: compose
         run: |
-          KEY="${{ github.event.inputs.aws_account_id }}-${{ github.event.inputs.s3_bucket_name }}/terraform.tfstate"
+          KEY="${{ github.event.inputs.s3_bucket_name }}/terraform.tfstate"
           echo "STATE_KEY=${KEY}" >> $GITHUB_OUTPUT
 
       - name: Setup Terraform CLI
@@ -110,7 +103,7 @@ jobs:
           TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
           TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
           TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
-          TF_VAR_aws_oidc_role_arn: ${{ steps.compose-role.outputs.role_arn }}
+          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn }}
           TF_VAR_aws_region: ${{ inputs.aws_region }}
           TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
           TF_VAR_repository_name: ${{ inputs.repository }}
@@ -183,7 +176,7 @@ jobs:
           TF_VAR_app_pem_file: ${{ env.APP_PEM_FILE }}
           TF_VAR_app_installation_id: ${{ steps.get_installation_id.outputs.INSTALLATION_ID }}
           TF_VAR_s3_bucket_name: ${{ inputs.s3_bucket_name }}
-          TF_VAR_aws_oidc_role_arn: ${{ needs.plan.outputs.role_arn  }}
+          TF_VAR_aws_oidc_role_arn: ${{ inputs.oidc_role_arn  }}
           TF_VAR_aws_region: ${{ inputs.aws_region }}
           TF_VAR_cloudfront_distribution_id: ${{ inputs.cloudfront_distribution_id }}
           TF_VAR_repository_name: ${{ inputs.repository }}
