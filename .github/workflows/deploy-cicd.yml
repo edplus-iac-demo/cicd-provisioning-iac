@@ -20,10 +20,10 @@ on:
             required: true
             type: choice
             options: 
-                - true
                 - false
+                - true
         repository:
-            description: 'Repository to deploy'
+            description: 'Repository Name'
             required: true
         env:
             description: 'Environment (e.g., nonprod, nonprod-qa)'
