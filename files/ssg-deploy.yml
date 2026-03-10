@@ -20,6 +20,7 @@ on:
   push:
     branches:
       - 'nonprod'    # adjust to your branch names
+      - 'nonprod-qa'
 
 permissions:
   id-token: write        
